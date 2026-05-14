@@ -1,51 +1,109 @@
-# Sentra
+# Sentra — Real-Time Infrastructure Monitoring Dashboard
 
-Sentra is a single-page Real-Time DevOps Monitoring Dashboard built with Vue 3, TypeScript, Pinia, and Vite. It simulates a production monitoring console with live infrastructure telemetry, metric cards, line/area/bar visualizations, searchable logs, filtering, pause/resume controls, and reconnect/error handling.
+A high-performance, real-time analytics dashboard that visualizes live-streaming infrastructure telemetry. Built for the HNG Frontend Wizards Stage 5A challenge.
 
-## Setup
+---
 
-```sh
+## Setup Instructions
+
+**Prerequisites:** Node.js 18+ and npm
+
+```bash
+# Clone the repository
+git clone https://github.com/your-username/sentra.git
+cd sentra
+
+# Install dependencies
 npm install
+
+# Start the development server
 npm run dev
-```
 
-Production build:
-
-```sh
+# Build for production
 npm run build
 ```
 
-## Architecture
+The app will be available at `http://localhost:5173`.
 
-- `src/stores/dashboardStore.ts` centralizes telemetry state, user filters, connection status, bounded history, and derived computed views.
-- `src/composables/useMockStream.ts` simulates a live stream with requestAnimationFrame-throttled ingestion, pause/resume support, random reconnects, and cleanup on unmount.
-- `src/composables/useTheme.ts` manages persisted light/dark mode with system preference fallback.
-- `src/utils/generateMockData.ts` produces realistic DevOps telemetry for services, global metrics, alerts, and logs.
-- `src/utils/validatePayload.ts` validates and sanitizes all incoming payloads before they reach UI state.
-- `src/components/charts/*` contains reusable SVG chart components for line, area, and service-load bar visualizations.
-- `src/components/dashboard/*` contains controls, metric cards, activity feed, and logs table.
+---
+
+## Architecture Overview
+
+```
+src/
+├── components/
+│   ├── charts/
+│   │   ├── AreaChart.vue       # Multi-metric area chart (SVG)
+│   │   ├── BarChart.vue        # Histogram bar chart (SVG)
+│   │   ├── ClusterLoad.vue     # Service pressure bars
+│   │   └── LineChart.vue       # Multi-metric line chart with hover inspect (SVG)
+│   └── dashboard/
+│       ├── ActivityFeed.vue    # Live event feed with transitions
+│       ├── DashboardControls.vue
+│       ├── LogsTable.vue       # Responsive logs table with mobile card fallback
+│       ├── MetricCard.vue      # KPI cards with trend indicators
+│       ├── PanelHeader.vue     # Reusable panel header
+│       └── SeverityBadge.vue   # Severity pill component
+├── composables/
+│   ├── useMockStream.ts        # Streaming simulation with reconnect logic
+│   └── useTheme.ts             # Dark/light mode with system preference sync
+├── constants/dashboard.ts      # Shared options, colors, labels
+├── stores/dashboardStore.ts    # Pinia store — single source of truth
+├── types/dashboard.ts          # TypeScript interfaces and union types
+├── utils/
+│   ├── generateMockData.ts     # Realistic telemetry payload generator
+│   └── validatePayload.ts      # Runtime payload validation and sanitization
+└── views/DashboardView.vue     # Root layout and component composition
+```
+
+The app follows a unidirectional data flow: the mock stream generates payloads → the store validates and ingests them → computed properties derive view-ready data → components render reactively.
+
+---
 
 ## State Management Strategy
 
-Pinia owns the live dashboard state. Streaming data is appended into bounded arrays to avoid unbounded memory growth. UI controls such as time range, chart mode, selected datasets, severity filter, and log search are stored centrally so every visualization reads from a consistent source of truth.
+State is managed with a single **Pinia store** (`dashboardStore`). All streaming data, UI controls, and derived metrics live here.
 
-## Rendering And Performance
+- `shallowRef` is used for high-churn arrays (`points`, `services`, `events`, `logs`) so Vue's reactivity system doesn't deep-track every nested value on every update — only the array reference itself triggers re-renders.
+- Derived data (`filteredPoints`, `filteredLogs`, `metricCards`, `systemHealth`) are `computed` properties that only recalculate when their specific dependencies change, not on every stream tick.
+- UI state (time range, chart mode, selected metrics, search, severity filter) is stored as plain `ref` values and mutated through explicit store actions.
 
-- Telemetry history is capped to 720 chart points, 140 activity events, and 220 log rows.
-- Chart rendering uses lightweight SVG paths with sliced windows instead of rendering every historical point.
-- Incoming stream updates are batched through `requestAnimationFrame`.
-- Computed properties derive filtered time windows and searchable logs without duplicating state.
-- Intervals, reconnect timers, and animation frames are cleaned up when the dashboard unmounts.
-- Light/dark styling is handled with Tailwind utilities and a persisted root theme class.
+---
 
-## Streaming Approach
+## Rendering Optimization Decisions
 
-The app uses a mocked streaming generator to simulate WebSocket-style telemetry. It emits service snapshots every 850ms, occasionally sends malformed payloads to exercise validation, and randomly simulates connection interruptions with reconnect backoff.
+**requestAnimationFrame batching** — `useMockStream` doesn't call `store.ingest()` directly on every interval tick. Instead it schedules the update via `requestAnimationFrame`, so multiple rapid payloads within a single frame are collapsed into one render cycle. This prevents layout thrashing under high-frequency updates.
 
-## Resilience And Security
+**Data windowing** — Chart components slice the points array (`slice(-120)` for area/line, `slice(-60)` for bar) before computing paths. The store itself caps total stored points at 720. This keeps SVG path computation bounded regardless of how long the stream runs.
 
-All incoming payloads are schema-checked, numeric fields are clamped, string fields are sanitized, and malformed payloads are dropped with visible dashboard feedback. The UI does not use unsafe HTML injection.
+**shallowRef for arrays** — Vue's deep reactivity on large arrays is expensive. Using `shallowRef` means Vue only reacts to array replacement (which is how the store always updates — `[...existing].slice(n)`) rather than tracking every element.
 
-## Trade-Offs
+**TransitionGroup for feeds** — Activity feed and log entries use Vue's `TransitionGroup` for enter/leave animations instead of manual DOM manipulation, keeping animations on the compositor thread.
 
-The dashboard uses custom SVG charts instead of a heavier charting dependency. That keeps setup simple and rendering fast for the assignment, while still demonstrating line, area, and bar chart behavior. A production system could swap these components for ECharts, uPlot, or D3 if deeper chart interactions were required.
+**SVG over canvas/library** — Charts are hand-rolled SVG. This avoids shipping a full charting library (~200kb+ for ECharts/Chart.js) and gives direct control over what triggers a re-render. The tradeoff is that complex chart features (axes, tooltips beyond hover, zoom) require more manual work.
+
+---
+
+## Data Streaming Approach
+
+Streaming is simulated via `useMockStream`, a composable that runs a `setInterval` at 850ms intervals. Each tick:
+
+1. Generates a realistic `TelemetryPayload` with correlated metric drift, occasional spikes, and per-service variance
+2. Schedules the payload via `requestAnimationFrame` to batch within the current frame
+3. Skips ingestion if the stream is paused
+
+Roughly 2.5% of ticks intentionally emit malformed payloads to exercise the validation and error handling path. About 1.2% of ticks simulate a reconnection event with exponential backoff (capped at 4 seconds).
+
+All incoming payloads pass through `validateTelemetryPayload` before touching the store. This function sanitizes strings (stripping `<>` to prevent XSS), clamps numbers to valid ranges, and drops the payload entirely if required fields are missing — returning `null` and incrementing the malformed payload counter instead of crashing.
+
+---
+
+## Trade-offs
+
+**Raw SVG vs. charting library** — Hand-rolling SVG charts keeps the bundle lean and gives full control over rendering, but means features like axes labels, grid lines, and zoom are not implemented. For a production system, a library like ECharts would be more appropriate.
+
+**Simulated stream vs. real WebSocket** — The mock stream covers all the UI states (connecting, live, paused, reconnecting, error) but real latency, backpressure, and message ordering issues wouldn't surface until connected to an actual backend.
+
+**In-memory data only** — All telemetry is held in memory and lost on page refresh. A production implementation would persist recent data to IndexedDB or replay from a server-side buffer on reconnect.
+
+**Fixed chart dimensions with SVG scaling** — Charts use a fixed `viewBox` and scale via CSS. This is simple and responsive but means bar/line density doesn't adapt to screen width — a narrow screen shows the same number of data points as a wide one, just smaller.
