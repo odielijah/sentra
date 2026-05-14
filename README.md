@@ -10,7 +10,7 @@ A high-performance, real-time analytics dashboard that visualizes live-streaming
 
 ```bash
 # Clone the repository
-git clone https://github.com/your-username/sentra.git
+git clone https://github.com/odielijah/sentra.git
 cd sentra
 
 # Install dependencies
